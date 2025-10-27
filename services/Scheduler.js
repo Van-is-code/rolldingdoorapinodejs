@@ -1,74 +1,75 @@
-const cron = require('node-cron');
-const Schedule = require('../models/Schedule');
+const express = require('express');
+const router = express.Router();
+const { protect } = require('../middleware/auth');
 const Log = require('../models/Log');
+const Schedule = require('../models/Schedule');
 
-const MQTT_TOPIC_COMMAND = 'door/command';
+// Bỏ MQTT_TOPIC_COMMAND
 
-class Scheduler {
-  constructor(aedes) {
-    this.aedes = aedes; // MQTT Broker
-    this.jobs = new Map(); // Lưu các job đang chạy
+// === API Gửi Lệnh ===
+// POST /api/command
+router.post('/command', protect, async (req, res) => {
+  const { action } = req.body; // "OPEN", "CLOSE", "STOP"
+  // const aedes = req.aedes; // Bỏ MQTT broker
+  const esp32Socket = req.esp32Socket; // Lấy socket ESP32 từ middleware
+
+  if (!['OPEN', 'CLOSE', 'STOP'].includes(action)) {
+    return res.status(400).json({ message: 'Lệnh không hợp lệ.' });
   }
 
-  // Khởi động: Tải tất cả lịch hẹn từ DB và chạy
-  async start() {
-    console.log('Khởi động Scheduler...');
-    const schedules = await Schedule.find({ isEnabled: true });
-    schedules.forEach(schedule => {
-      this.addJob(schedule);
-    });
-    console.log(`Đã tải và chạy ${this.jobs.size} lịch hẹn.`);
+  // --- Gửi lệnh qua WebSocket ---
+  if (esp32Socket && esp32Socket.readyState === WebSocket.OPEN) { // WebSocket phải đang mở
+     try {
+        console.log(`Gửi lệnh "${action}" tới ESP32 qua WebSocket...`);
+        esp32Socket.send(action); // Gửi thẳng chuỗi lệnh
+
+        // Ghi log sau khi gửi thành công
+         await Log.create({
+           user: req.user.id,
+           action: action,
+           source: 'APP'
+         });
+
+        res.status(200).json({ message: 'Đã gửi lệnh thành công.' });
+     } catch (sendError) {
+        console.error("Lỗi khi gửi WebSocket:", sendError);
+        res.status(500).json({ message: 'Lỗi server khi gửi lệnh WebSocket.' });
+     }
+  } else {
+     console.warn("Không có kết nối ESP32 WebSocket hoặc kết nối đã đóng.");
+     res.status(400).json({ message: 'Thiết bị ESP32 không kết nối. Không thể gửi lệnh.' });
   }
+  // --- Kết thúc gửi WebSocket ---
 
-  // Thêm 1 job
-  addJob(schedule) {
-    const jobId = schedule._id.toString();
-    
-    // Kiểm tra nếu job đã tồn tại thì không thêm nữa
-    if (this.jobs.has(jobId)) {
-      return;
-    }
-
-    // Kiểm tra cronTime có hợp lệ không
-    if (!cron.validate(schedule.cronTime)) {
-      console.error(`Lịch hẹn ${jobId} có cronTime không hợp lệ: ${schedule.cronTime}`);
-      return;
-    }
-
-    // Tạo 1 job mới
-    const job = cron.schedule(schedule.cronTime, async () => {
-      console.log(`THỰC THI LỊCH HẸN ${jobId}: Gửi lệnh ${schedule.action}`);
-      
-      // 1. Gửi lệnh qua MQTT
-      this.aedes.publish({
-        topic: MQTT_TOPIC_COMMAND,
-        payload: schedule.action,
-        qos: 1,
-        retain: false
-      });
-
-      // 2. Ghi log
-      await Log.create({
-        user: schedule.user,
-        action: schedule.action,
-        source: 'SCHEDULED'
-      });
-    });
-
-    // Lưu job vào Map để quản lý
-    this.jobs.set(jobId, job);
-    console.log(`Đã thêm lịch hẹn ${jobId} (${schedule.cronTime})`);
+  /* // Bỏ phần gửi MQTT cũ
+  try {
+    // 1. Gửi lệnh qua MQTT
+    aedes.publish({ ... });
+    // 2. Ghi log
+    await Log.create({ ... });
+    res.status(200).json({ message: 'Đã gửi lệnh thành công.' });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi server.' });
   }
+  */
+});
 
-  // Xóa 1 job
-  removeJob(jobId) {
-    const job = this.jobs.get(jobId);
-    if (job) {
-      job.stop(); // Dừng job
-      this.jobs.delete(jobId); // Xóa khỏi Map
-      console.log(`Đã xóa lịch hẹn ${jobId}`);
-    }
-  }
-}
+// === API Lịch Sử (Giữ nguyên) ===
+router.get('/logs', protect, async (req, res) => {
+  // ... (Giữ nguyên code)
+});
 
-module.exports = Scheduler;
+// === API Hẹn Giờ (Giữ nguyên logic routes, chỉ thay đổi cách Scheduler gửi lệnh) ===
+router.post('/schedules', protect, async (req, res) => {
+ // ... (Giữ nguyên code)
+});
+
+router.get('/schedules', protect, async (req, res) => {
+  // ... (Giữ nguyên code)
+});
+
+router.delete('/schedules/:id', protect, async (req, res) => {
+  // ... (Giữ nguyên code)
+});
+
+module.exports = router;
