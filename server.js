@@ -1,102 +1,91 @@
 require('dotenv').config(); // Đọc file .env
 const express = require('express');
-const http = require('http'); // Sử dụng module http gốc
-const WebSocket = require('ws'); // Thư viện WebSocket
 const cors = require('cors');
+const mqtt = require('mqtt'); // <<< Thư viện MQTT client
 const connectDB = require('./config/db');
-// Bỏ import MqttBroker
 const Scheduler = require('./services/Scheduler');
 const User = require('./models/User');
 
 const app = express();
-// Tạo HTTP server từ Express app để WebSocket có thể gắn vào
-const server = http.createServer(app);
+
+// --- Kết nối MQTT Client tới HiveMQ Cloud ---
+// Kiểm tra biến môi trường
+if (!process.env.HIVEMQ_CLUSTER_URL || !process.env.HIVEMQ_USERNAME || !process.env.HIVEMQ_PASSWORD) {
+    console.error("LỖI: Vui lòng cung cấp HIVEMQ_CLUSTER_URL, HIVEMQ_USERNAME, và HIVEMQ_PASSWORD trong file .env!");
+    process.exit(1);
+}
+
+const mqttOptions = {
+  host: process.env.HIVEMQ_CLUSTER_URL,
+  port: parseInt(process.env.HIVEMQ_PORT || '8883', 10), // Port TLS/SSL
+  protocol: 'mqtts', // Sử dụng mqtts cho kết nối an toàn
+  username: process.env.HIVEMQ_USERNAME,
+  password: process.env.HIVEMQ_PASSWORD,
+  clientId: `backend_nodejs_${Math.random().toString(16).substr(2, 8)}`, // ID ngẫu nhiên cho backend
+  connectTimeout: 10000, // Tăng timeout lên 10 giây
+  reconnectPeriod: 1000, // Thử kết nối lại mỗi giây
+  clean: true, // Bắt đầu session mới mỗi lần kết nối
+};
+
+console.log(`Đang kết nối tới HiveMQ Broker: ${mqttOptions.protocol}://${mqttOptions.host}:${mqttOptions.port}`);
+let mqttClient;
+try {
+    mqttClient = mqtt.connect(mqttOptions);
+} catch (e) {
+    console.error("Lỗi ngay khi gọi mqtt.connect:", e);
+    process.exit(1);
+}
+
+// --- Các sự kiện của MQTT Client ---
+mqttClient.on('connect', () => {
+  console.log('>>> Đã kết nối thành công tới HiveMQ Broker!');
+  // Không cần subscribe gì ở backend trong trường hợp này
+});
+
+mqttClient.on('reconnect', () => {
+  console.log('MQTT Client đang thử kết nối lại...');
+});
+
+mqttClient.on('error', (error) => {
+  console.error('Lỗi MQTT Client:', error.message);
+});
+
+mqttClient.on('close', () => {
+  console.log('MQTT Client đã ngắt kết nối.');
+});
+
+mqttClient.on('offline', () => {
+    console.log('MQTT Client đang offline.');
+});
+
+mqttClient.on('message', (topic, message) => {
+  // Xử lý nếu backend có subscribe topic nào đó
+  console.log(`Received message on topic ${topic}: ${message.toString()}`);
+});
+// --- Kết thúc MQTT Client ---
+
 
 // Kết nối Database
 connectDB();
 
-// --- Khởi tạo WebSocket Server (WSS) ---
-// Gắn WebSocket server vào HTTP server đã tạo
-const wss = new WebSocket.Server({ server });
-console.log('WebSocket Server is initializing...');
-
-// Biến để lưu trữ kết nối của ESP32 (cách đơn giản nhất)
-let esp32Socket = null;
-
-wss.on('connection', (ws, req) => {
-  const clientIp = req.socket.remoteAddress;
-  console.log(`Client WebSocket connected from ${clientIp}`);
-
-  // Giả định client kết nối là ESP32 và chỉ có 1 ESP32
-  if (esp32Socket && esp32Socket.readyState === WebSocket.OPEN) {
-     console.warn("Một ESP32 khác đang cố kết nối trong khi đã có kết nối! Đóng kết nối cũ.");
-     esp32Socket.terminate(); // Đóng kết nối cũ
-  }
-  esp32Socket = ws;
-  console.log('ESP32 WebSocket assigned.');
-
-  // Lắng nghe tin nhắn từ client (ESP32)
-  ws.on('message', (message) => {
-    try {
-      const messageString = message.toString();
-      console.log('Received from ESP32:', messageString);
-      // Xử lý tin nhắn từ ESP32 nếu cần
-    } catch (e) {
-      console.error('Error processing message from ESP32:', e);
-    }
-  });
-
-  // Xử lý khi client đóng kết nối
-  ws.on('close', (code, reason) => {
-    const reasonString = reason ? reason.toString() : 'N/A';
-    console.log(`Client WebSocket disconnected. Code: ${code}, Reason: ${reasonString}`);
-    if (esp32Socket === ws) {
-      esp32Socket = null; // Xóa tham chiếu
-      console.log('ESP32 WebSocket reference cleared.');
-    }
-  });
-
-  // Xử lý lỗi kết nối
-  ws.on('error', (error) => {
-    console.error(`WebSocket Error for client ${clientIp}:`, error);
-    if (esp32Socket === ws) {
-      esp32Socket = null;
-       console.log('ESP32 WebSocket reference cleared due to error.');
-    }
-    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        console.log(`Terminating WebSocket connection for ${clientIp} due to error.`);
-        ws.terminate();
-    }
-  });
-});
-
-wss.on('error', (error) => {
-   console.error('WebSocket Server Error:', error);
-});
-
-console.log('WebSocket Server event listeners attached.');
-// --- Kết thúc WebSocket Server ---
-
-
-// Khởi tạo Bộ hẹn giờ và truyền wss vào
-const scheduler = new Scheduler(wss);
+// Khởi tạo Bộ hẹn giờ và truyền mqttClient vào
+const scheduler = new Scheduler(mqttClient); // Truyền mqttClient
 scheduler.start();
 
 // Middlewares cho Express
 app.use(cors());
 app.use(express.json());
 
-// Middleware để truyền wss và esp32Socket vào các route handler của Express
+// Middleware để truyền mqttClient và scheduler vào các route
 app.use((req, res, next) => {
-  req.wss = wss;
-  req.esp32Socket = esp32Socket;
+  req.mqttClient = mqttClient; // <<< Truyền mqttClient
   req.scheduler = scheduler;
   next();
 });
 
 // Định nghĩa Routes Express
-app.use('/auth', require('./routes/auth'));
-app.use('/api', require('./routes/api'));
+app.use('/auth', require('./routes/auth')); // Router xác thực giữ nguyên
+app.use('/api', require('./routes/api'));   // Router API sẽ dùng mqttClient
 
 // Tạo tài khoản Admin (Giữ nguyên)
 const createAdminAccount = async () => {
@@ -117,8 +106,8 @@ const createAdminAccount = async () => {
 };
 createAdminAccount();
 
-// Khởi động HTTP Server (Express + WebSocket)
+// Khởi động API Server Express
 const API_PORT = process.env.PORT || 3000;
-server.listen(API_PORT, () => {
-  console.log(`API Server & WebSocket đang chạy trên port ${API_PORT}`);
+app.listen(API_PORT, () => {
+  console.log(`API Server đang chạy trên port ${API_PORT}`);
 });
