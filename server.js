@@ -1,40 +1,104 @@
 require('dotenv').config(); // Đọc file .env
 const express = require('express');
+const http = require('http'); // Sử dụng module http gốc
+const WebSocket = require('ws'); // Thư viện WebSocket
 const cors = require('cors');
 const connectDB = require('./config/db');
-const { createMqttBroker } = require('./services/MqttBroker');
+// Bỏ import MqttBroker
 const Scheduler = require('./services/Scheduler');
-const User = require('./models/User'); // Import model User
+const User = require('./models/User');
 
 const app = express();
+// Tạo HTTP server từ Express app để WebSocket có thể gắn vào
+const server = http.createServer(app);
 
 // Kết nối Database
 connectDB();
 
-// Khởi tạo MQTT Broker
-const { aedes, mqttServer } = createMqttBroker(process.env.MQTT_PORT);
+// --- Khởi tạo WebSocket Server (WSS) ---
+// Gắn WebSocket server vào HTTP server đã tạo
+const wss = new WebSocket.Server({ server });
+console.log('WebSocket Server is initializing...');
 
-// Khởi tạo Bộ hẹn giờ và truyền aedes vào
-const scheduler = new Scheduler(aedes);
-scheduler.start(); // Bắt đầu quét các lịch hẹn
+// Biến để lưu trữ kết nối của ESP32 (cách đơn giản nhất)
+let esp32Socket = null;
 
-// Middlewares
-app.use(cors()); // Cho phép Flutter gọi
-app.use(express.json()); // Đọc body dạng JSON
+wss.on('connection', (ws, req) => {
+  const clientIp = req.socket.remoteAddress;
+  console.log(`Client WebSocket connected from ${clientIp}`);
 
-// Middleware để truyền aedes và scheduler vào các route
-// Bằng cách này, các API có thể publish MQTT hoặc thêm/xóa lịch hẹn
+  // Giả định client kết nối là ESP32 và chỉ có 1 ESP32
+  if (esp32Socket && esp32Socket.readyState === WebSocket.OPEN) {
+     console.warn("Một ESP32 khác đang cố kết nối trong khi đã có kết nối! Đóng kết nối cũ.");
+     esp32Socket.terminate(); // Đóng kết nối cũ
+  }
+  esp32Socket = ws;
+  console.log('ESP32 WebSocket assigned.');
+
+  // Lắng nghe tin nhắn từ client (ESP32)
+  ws.on('message', (message) => {
+    try {
+      const messageString = message.toString();
+      console.log('Received from ESP32:', messageString);
+      // Xử lý tin nhắn từ ESP32 nếu cần
+    } catch (e) {
+      console.error('Error processing message from ESP32:', e);
+    }
+  });
+
+  // Xử lý khi client đóng kết nối
+  ws.on('close', (code, reason) => {
+    const reasonString = reason ? reason.toString() : 'N/A';
+    console.log(`Client WebSocket disconnected. Code: ${code}, Reason: ${reasonString}`);
+    if (esp32Socket === ws) {
+      esp32Socket = null; // Xóa tham chiếu
+      console.log('ESP32 WebSocket reference cleared.');
+    }
+  });
+
+  // Xử lý lỗi kết nối
+  ws.on('error', (error) => {
+    console.error(`WebSocket Error for client ${clientIp}:`, error);
+    if (esp32Socket === ws) {
+      esp32Socket = null;
+       console.log('ESP32 WebSocket reference cleared due to error.');
+    }
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        console.log(`Terminating WebSocket connection for ${clientIp} due to error.`);
+        ws.terminate();
+    }
+  });
+});
+
+wss.on('error', (error) => {
+   console.error('WebSocket Server Error:', error);
+});
+
+console.log('WebSocket Server event listeners attached.');
+// --- Kết thúc WebSocket Server ---
+
+
+// Khởi tạo Bộ hẹn giờ và truyền wss vào
+const scheduler = new Scheduler(wss);
+scheduler.start();
+
+// Middlewares cho Express
+app.use(cors());
+app.use(express.json());
+
+// Middleware để truyền wss và esp32Socket vào các route handler của Express
 app.use((req, res, next) => {
-  req.aedes = aedes;
+  req.wss = wss;
+  req.esp32Socket = esp32Socket;
   req.scheduler = scheduler;
   next();
 });
 
-// Định nghĩa Routes
+// Định nghĩa Routes Express
 app.use('/auth', require('./routes/auth'));
 app.use('/api', require('./routes/api'));
 
-// Tự động tạo tài khoản Admin khi khởi động (nếu chưa có)
+// Tạo tài khoản Admin (Giữ nguyên)
 const createAdminAccount = async () => {
   try {
     const adminUser = await User.findOne({ role: 'admin' });
@@ -53,11 +117,8 @@ const createAdminAccount = async () => {
 };
 createAdminAccount();
 
-
-// Khởi động API Server
+// Khởi động HTTP Server (Express + WebSocket)
 const API_PORT = process.env.PORT || 3000;
-app.listen(API_PORT, () => {
-  console.log(`API Server đang chạy trên port ${API_PORT}`);
+server.listen(API_PORT, () => {
+  console.log(`API Server & WebSocket đang chạy trên port ${API_PORT}`);
 });
-
-// MQTT Server đã được khởi động bên trong MqttBroker.js
