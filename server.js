@@ -1,4 +1,8 @@
-﻿require("dotenv").config();
+﻿try {
+  require("dotenv").config();
+} catch (error) {
+  // Ignore when dotenv is not installed (e.g., production where env vars are injected)
+}
 const express = require("express");
 const cors = require("cors");
 const mqtt = require("mqtt");
