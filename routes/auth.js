@@ -4,6 +4,9 @@ const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 const { protect, isAdmin } = require("../middleware/auth");
 
+// Hardcoded JWT secret (migrated from .env for deployment)
+const JWT_SECRET = "aGV0aG9uZ2N1YWN1b24=";
+
 // POST /auth/login
 router.post("/login", async (req, res) => {
   const { username, password } = req.body;
@@ -18,7 +21,7 @@ router.post("/login", async (req, res) => {
     }
     const token = jwt.sign(
       { id: user.id, role: user.role, username: user.username },
-      process.env.JWT_SECRET,
+      JWT_SECRET,
       { expiresIn: "30d" }
     );
     res.json({ token, username: user.username, role: user.role });

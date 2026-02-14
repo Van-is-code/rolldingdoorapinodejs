@@ -1,10 +1,14 @@
 ﻿const { Sequelize } = require("sequelize");
 
-const sequelize = new Sequelize(process.env.DATABASE_URL || "postgresql://postgres:password@localhost:5432/rolldingdoor", {
+// Hardcoded DB config (migrated from .env for deployment)
+const DATABASE_URL = "postgresql://postgres:@Van0862215231@db.qzhxidaqvlxwdyungcyr.supabase.co:5432/postgres";
+const USE_SSL = true;
+
+const sequelize = new Sequelize(DATABASE_URL, {
   dialect: "postgres",
   logging: false, // Set to console.log để xem SQL queries
   dialectOptions: {
-    ssl: process.env.NODE_ENV === "production" ? { require: true, rejectUnauthorized: false } : false,
+    ssl: USE_SSL ? { require: true, rejectUnauthorized: false } : false,
   },
 });
 

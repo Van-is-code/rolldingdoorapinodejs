@@ -1,6 +1,9 @@
 ﻿const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
+// Hardcoded JWT secret (migrated from .env for deployment)
+const JWT_SECRET = "aGV0aG9uZ2N1YWN1b24=";
+
 // Middleware xác thực token
 exports.protect = async (req, res, next) => {
   let token;
@@ -13,7 +16,7 @@ exports.protect = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
     req.user = await User.findByPk(decoded.id, {
       attributes: { exclude: ["password"] }, // Exclude password field
     });
