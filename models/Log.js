@@ -1,24 +1,41 @@
-const mongoose = require('mongoose');
+﻿const { DataTypes } = require("sequelize");
+const { sequelize } = require("../config/db");
+const User = require("./User");
 
-const LogSchema = new mongoose.Schema({
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+const Log = sequelize.define(
+  "Log",
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true,
+    },
+    userId: {
+      type: DataTypes.INTEGER,
+      references: {
+        model: User,
+        key: "id",
+      },
+    },
+    action: {
+      type: DataTypes.ENUM("OPEN", "CLOSE", "STOP"),
+      allowNull: false,
+    },
+    source: {
+      type: DataTypes.ENUM("APP", "SCHEDULED"),
+      allowNull: false,
+    },
+    timestamp: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW,
+    },
   },
-  action: {
-    type: String,
-    enum: ['OPEN', 'CLOSE', 'STOP'],
-    required: true
-  },
-  source: {
-    type: String,
-    enum: ['APP', 'SCHEDULED'], // Nguồn gửi lệnh
-    required: true
-  },
-  timestamp: {
-    type: Date,
-    default: Date.now
+  {
+    timestamps: false,
   }
-});
+);
 
-module.exports = mongoose.model('Log', LogSchema);
+// Set up association
+Log.belongsTo(User, { foreignKey: "userId" });
+
+module.exports = Log;
