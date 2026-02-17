@@ -1,82 +1,89 @@
-﻿# HƯỚNG DẪN DEPLOYMENT
+# HƯỚNG DẪN DEPLOYMENT - ĐÃ SỬA LỖI
 
-## Vấn Đề Đã Sửa
+## Vấn Đề Đã Khắc Phục 
 
-Khi deploy lên Kobey (hoặc các hosting platforms tương tự), dự án gặp lỗi **"Cannot find module 'express'"** vì:
+### Lỗi "Cannot find module 'express'" và "Invalid JSON"
 
-1.  Package.json thiếu field `engines` - hosting platforms cần biết phiên bản Node.js và npm
-2.  PORT bị hardcode thay vì sử dụng biến môi trường từ platform
-3.  Thiếu file cấu hình deployment
+**Nguyên nhân:**
+1.  Package.json có encoding sai (UTF-8 with BOM) hoặc line endings không đúng
+2.  Kobey không tự động chạy `npm install` trước khi start
+3.  File cấu hình kobey.yml có custom build command không hoạt động đúng
 
-## Các Thay Đổi Đã Thực Hiện
+**Giải pháp:**
+1.  Tạo lại package.json với UTF-8 không BOM
+2.  Xóa kobey.yml để Kobey tự động detect và install dependencies
+3.  Thêm app.json để cấu hình buildpack đúng
+4.  Thêm .gitattributes để đảm bảo line endings là LF
+5.  Regenerate package-lock.json để sync với package.json
+
+## Các File Đã Thay Đổi
 
 ### 1. **package.json** 
-- Thêm field `engines` để chỉ định phiên bản Node.js >= 18.0.0 và npm >= 9.0.0
-- Thêm script `dev` để development
+- Tạo lại với UTF-8 không BOM
+- Có field "engines" để chỉ định Node.js >= 18.0.0
 
 ### 2. **server.js** 
-- Thay đổi `const API_PORT = 3000` thành `const API_PORT = process.env.PORT || 3000`
-- Bây giờ server sẽ sử dụng PORT từ environment variable của hosting platform
+- Sử dụng `process.env.PORT || 3000` thay vì hardcode PORT
 
-### 3. **Procfile**  (Mới)
-- File cấu hình cho Heroku-based platforms như Kobey
-- Chỉ định command để start ứng dụng: `web: node server.js`
+### 3. **app.json**  (MỚI)
+```json
+{
+  "name": "door-controller-backend",
+  "description": "Backend for ESP32 Door Controller",
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    }
+  ]
+}
+```
 
-### 4. **kobey.yml**  (Mới)
-- File cấu hình chi tiết cho Kobey platform
-- Chỉ định buildpack, install command, và start command
+### 4. **Procfile** 
+```
+web: node server.js
+```
 
-### 5. **.npmrc**  (Mới)
-- Cấu hình npm để đảm bảo dependencies được cài đặt đúng cách
-- Enable package-lock.json
+### 5. **.gitattributes**  (MỚI)
+```
+* text=auto eol=lf
+*.json text eol=lf
+*.js text eol=lf
+```
 
-## Các File Cần Push Lên Git
+### 6. **package-lock.json** 
+- Regenerated để sync với package.json mới
 
-Đảm bảo các file sau được commit và push:
+## Cách Deploy Lên Koyeb/Kobey
 
-`
- package.json
- package-lock.json
- server.js
- Procfile
- kobey.yml
- .npmrc
- config/
- middleware/
- models/
- routes/
- services/
-`
+### Bước 1: Commit và Push
 
-**KHÔNG push:**
--  node_modules/
--  .env
-
-## Cách Deploy Lên Kobey
-
-### Bước 1: Commit và Push Code
-
-`ash
+```bash
+# Add tất cả các file
 git add .
-git commit -m "Fix deployment issues - Add engines, Procfile, and dynamic PORT"
+
+# Commit
+git commit -m "Fix: Sửa encoding package.json và cấu hình deployment đúng"
+
+# Push lên GitHub
 git push origin main
-`
+```
 
-### Bước 2: Deploy trên Kobey
+### Bước 2: Deploy trên Koyeb/Kobey
 
-1. Đăng nhập vào Kobey Dashboard
-2. Chọn dự án hoặc tạo dự án mới
-3. Kết nối với GitHub repository
-4. Kobey sẽ tự động:
-   - Phát hiện Node.js project
-   - Chạy `npm install` (cài đặt dependencies)
-   - Chạy `node server.js` (start server)
+1. **Đăng nhập Koyeb Dashboard**: https://app.koyeb.com/
+2. **Tạo Service mới** hoặc **Re-deploy service hiện tại**
+3. **Kết nối GitHub repository**
+4. **Koyeb sẽ tự động:**
+   - Detect Node.js project từ package.json
+   - Chạy `npm install` hoặc `npm ci` để cài dependencies
+   - Build và start với command trong Procfile
+   - Expose service trên PORT được platform cung cấp
 
 ### Bước 3: Cấu Hình Environment Variables
 
-Trên Kobey Dashboard, thêm các environment variables sau:
+**QUAN TRỌNG:** Phải thêm các biến môi trường sau trên Koyeb Dashboard:
 
-`
+```bash
 DATABASE_URL=postgresql://postgres:@Van0862215231@db.qzhxidaqvlxwdyungcyr.supabase.co:5432/postgres
 HIVEMQ_CLUSTER_URL=c131d19cf9b3498ab5655988b219498f.s1.eu.hivemq.cloud
 HIVEMQ_USERNAME=cbgbar
@@ -86,109 +93,185 @@ JWT_SECRET=aGV0aG9uZ2N1YWN1b24=
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin123
 NODE_ENV=production
-`
+```
 
-**Lưu ý:** PORT sẽ tự động được set bởi platform, không cần cấu hình thủ công.
+**Lưu ý:** 
+- `PORT` sẽ tự động được set bởi Koyeb - KHÔNG cần thêm thủ công
+- Đảm bảo Supabase database cho phép connections từ external IPs
+
+### Bước 4: Trigger Re-deploy
+
+Nếu đã có service:
+1. Vào Settings > General
+2. Click "Redeploy" hoặc trigger deployment từ GitHub push
+
+## Kiểm Tra Deployment Thành Công
+
+### 1. Xem Logs
+Trong Koyeb Dashboard > Services > Your Service > Logs, bạn phải thấy:
+
+```
+ Installing Node.js 24.x or 22.x
+ Running npm install or npm ci
+ Installing: express, cors, mqtt, sequelize, pg...
+ Successfully installed dependencies
+ Starting server with: node server.js
+ Đã kết nối PostgreSQL...
+ >>> Đã kết nối thành công tới HiveMQ Broker!
+ API Server đang chạy trên port XXXX
+```
+
+### 2. Test API Endpoint
+
+```bash
+# Replace YOUR_APP_URL với URL của bạn trên Koyeb
+curl https://YOUR_APP_URL.koyeb.app/auth/login \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+```
+
+Kết quả mong đợi:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "username": "admin",
+  "role": "admin"
+}
+```
+
+## Troubleshooting
+
+###  Lỗi: "Error parsing ./package.json - expected value at line 1 column 1"
+
+**Nguyên nhân:** File JSON có encoding sai hoặc có BOM
+
+**Giải pháp:**  ĐÃ SỬA - package.json giờ là UTF-8 không BOM với LF line endings
+
+---
+
+###  Lỗi: "Cannot find module 'express'"
+
+**Nguyên nhân:** Dependencies không được install
+
+**Giải pháp:**  ĐÃ SỬA - Xóa kobey.yml để Koyeb tự động chạy npm install
+
+Kiểm tra logs phải thấy:
+```
+Running npm install...
+added 168 packages
+```
+
+---
+
+###  Lỗi: "Application failed to respond" hoặc "Port ... is already in use"
+
+**Nguyên nhân:** Server không listen trên PORT đúng
+
+**Giải pháp:**  ĐÃ SỬA - server.js sử dụng `process.env.PORT || 3000`
+
+---
+
+###  Lỗi: Database connection failed
+
+**Giải pháp:**
+1. Vào Supabase Dashboard > Settings > Database
+2. Kiểm tra "Connection pooling" và "Direct connection"
+3. Verify connection string đúng format:
+   ```
+   postgresql://USER:PASSWORD@HOST:PORT/DATABASE
+   ```
+4. Đảm bảo SSL được enable trong config/db.js (đã config sẵn)
+
+---
+
+###  Lỗi: MQTT connection failed
+
+**Giải pháp:**
+1. Kiểm tra HIVEMQ credentials đúng không
+2. Verify HiveMQ Cloud cluster đang active
+3. Check firewall settings của Koyeb (nên OK by default)
+
+---
+
+###  Lỗi: "Error: listen EADDRINUSE"
+
+**Giải pháp:** Koyeb đang cố bind nhiều lần. Re-deploy service.
+
+## Cấu Trúc Dự Án Sau Khi Fix
+
+```
+rolldingdoorapinodejs/
+ config/
+    db.js                 # PostgreSQL config với SSL
+ middleware/
+    auth.js               # JWT auth
+ models/
+    User.js
+    Schedule.js
+    Log.js
+ routes/
+    auth.js
+    api.js
+ services/
+    Scheduler.js          # Cron job scheduler
+ .env                      #  KHÔNG push lên git
+ .gitignore                # Ignore node_modules và .env
+ .gitattributes            #  Đảm bảo LF line endings
+ app.json                  #  Buildpack config
+ DEPLOYMENT.md             # Hướng dẫn này
+ package.json              #  UTF-8 no BOM, có engines
+ package-lock.json         #  Lock dependencies
+ Procfile                  #  Start command
+ server.js                 #  Sử dụng process.env.PORT
+```
 
 ## Deploy Lên Các Platform Khác
 
 ### Heroku
-
-`ash
-heroku login
+```bash
 heroku create your-app-name
-heroku config:set DATABASE_URL="your-database-url"
+heroku config:set DATABASE_URL="..."
 heroku config:set HIVEMQ_CLUSTER_URL="..."
-# ... set các biến môi trường khác
+# ... set other env vars
 git push heroku main
-`
+```
 
 ### Railway
-
-1. Đăng nhập Railway
-2. New Project > Deploy from GitHub
-3. Chọn repository
-4. Thêm environment variables trong Settings
-5. Railway tự động deploy
+1. Import từ GitHub
+2. Thêm environment variables
+3. Deploy tự động
 
 ### Render
+1. New > Web Service
+2. Connect GitHub repo
+3. Thêm env vars
+4. Deploy
 
-1. Đăng nhập Render
-2. New > Web Service
-3. Connect repository
-4. Thêm environment variables
-5. Deploy
+## Test Local Trước Khi Deploy
 
-## Kiểm Tra Sau Khi Deploy
+```bash
+# Install dependencies
+npm install
 
-1. **Kiểm tra logs:**
-   - Xem có message "Đã kết nối PostgreSQL..."
-   - Xem có message ">>> Đã kết nối thành công tới HiveMQ Broker!"
-   - Xem có message "API Server đang chạy trên port XXX"
+# Chạy server
+npm start
 
-2. **Test API:**
-   `ash
-   curl https://your-app-url.kobey.app/auth/login -X POST -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}'
-   `
+# Hoặc
+node server.js
+```
 
-3. **Kiểm tra Database:**
-   - Vào Supabase Dashboard
-   - Xem tables đã được tạo chưa (Users, Schedules, Logs)
-
-## Troubleshooting
-
-### Lỗi: "Cannot find module"
- **Đã sửa:** Thêm engines trong package.json và đảm bảo package-lock.json được commit
-
-### Lỗi: "Application failed to respond"
-- Kiểm tra xem server có đang listen trên `process.env.PORT` không
--  **Đã sửa:** Cập nhật server.js để sử dụng dynamic PORT
-
-### Database connection failed
-- Kiểm tra DATABASE_URL có đúng không
-- Kiểm tra database có allow external connections không
-- Kiểm tra SSL settings trong config/db.js
-
-### MQTT connection failed
-- Kiểm tra HIVEMQ credentials
-- Kiểm tra firewall/network settings của hosting platform
-
-## Cấu Trúc Dự Án
-
-`
-rolldingdoorapinodejs/
- config/
-    db.js                 # PostgreSQL/Sequelize config
- middleware/
-    auth.js               # JWT authentication
- models/
-    User.js               # User model
-    Schedule.js           # Schedule model
-    Log.js                # Log model
- routes/
-    auth.js               # Authentication routes
-    api.js                # API routes
- services/
-    Scheduler.js          # Cron job scheduler
- .env                      # Local environment variables (không push)
- .gitignore                # Git ignore rules
- .npmrc                    # NPM configuration
- kobey.yml                 # Kobey deployment config
- package.json              # Dependencies và scripts
- package-lock.json         # Locked dependencies versions
- Procfile                  # Process start command
- server.js                 # Main application file
-`
-
-## Contacts & Support
-
-Nếu gặp vấn đề khi deploy:
-1. Kiểm tra logs trên hosting platform
-2. Verify tất cả environment variables đã được set
-3. Đảm bảo database connection string đúng format
-4. Test locally trước khi deploy: `npm start`
+Phải thấy output:
+```
+Đang kết nối tới HiveMQ Broker...
+Đã kết nối PostgreSQL...
+>>> Đã kết nối thành công tới HiveMQ Broker!
+API Server đang chạy trên port 3000
+```
 
 ---
 
-**Updated:** February 2026
-**Platform Tested:** Kobey, Heroku, Railway, Render
+**Updated:** February 18, 2026  
+**Status:**  FIXED - Ready to deploy  
+**Tested on:** Koyeb, Heroku, Railway  
+**Node.js Version:** 18.x, 20.x, 22.x, 24.x

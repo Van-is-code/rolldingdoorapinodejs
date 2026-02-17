@@ -1,0 +1,18 @@
+{
+  "name": "door-controller-backend",
+  "description": "Backend for ESP32 Door Controller",
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    }
+  ],
+  "scripts": {
+    "postdeploy": "echo 'Deployment successful'"
+  },
+  "env": {
+    "NODE_ENV": {
+      "description": "Node environment",
+      "value": "production"
+    }
+  }
+}
