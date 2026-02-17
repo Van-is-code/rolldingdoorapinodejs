@@ -1,0 +1,13 @@
+﻿# Kobey Deployment Configuration
+build:
+  buildpacks:
+    - heroku/nodejs
+  
+run:
+  install: npm install
+  build: echo "No build step required"
+  start: node server.js
+
+env:
+  NODE_ENV: production
+  PORT: 3000
